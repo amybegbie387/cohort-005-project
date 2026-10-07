@@ -14,6 +14,29 @@ _Avoid_: Admin (on its own), the team, Staff
 A learner who buys and manages a Team Licence. A Team Admin has no say over Refund Requests.
 _Avoid_: Admin (on its own)
 
+### Enrollment
+
+**Enrollment**:
+A Student's place on a course, which lets them take it. A Student has at most one Enrollment per course, whether it came from an Individual Purchase or a Claimed Seat.
+_Avoid_: Place on a course, Access
+
+**Lapsed**:
+A Student who has lost their Enrollment on a course but still has progress on it.
+
+**Watched**:
+Seconds of video a Student has actually played in a course: the furthest point reached in each lesson, added up. Not lessons opened.
+_Avoid_: Viewed, Progress
+
+### Discussions
+
+**Discussion Question**:
+A top-level comment on a lesson by anyone other than the course's Instructor.
+_Avoid_: Question (on its own, which clashes with quiz questions), Thread
+
+**Discussion Reply**:
+A comment that answers a Discussion Question. Replies are one level deep.
+_Avoid_: Reply (on its own), Answer
+
 ### Purchases
 
 **Purchase**:
