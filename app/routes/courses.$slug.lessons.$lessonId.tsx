@@ -9,7 +9,13 @@ import {
   CommentThread,
   type RenderedComment,
 } from "~/components/comment-thread";
-import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
+import {
+  createComment,
+  deleteComment,
+  getComment,
+  updateComment,
+} from "~/lib/comments.server";
+import { getNotifications } from "~/lib/notifications-instance.server";
 import { db } from "~/db";
 import {
   categories,
@@ -323,23 +329,6 @@ function getCourseForLesson(lessonId: number) {
     .get();
 }
 
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
-function assertValidBody(body: string) {
-  const trimmed = body.trim();
-  if (trimmed.length < MIN_COMMENT_LENGTH) {
-    throw new Error("Comment cannot be empty");
-  }
-  if (trimmed.length > MAX_COMMENT_LENGTH) {
-    throw new Error(
-      `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`
-    );
-  }
-  return trimmed;
-}
-
 function getLessonThread(lessonId: number): ThreadComment[] {
   const course = getCourseForLesson(lessonId);
   if (!course) return [];
@@ -399,81 +388,6 @@ function getLessonThread(lessonId: number): ThreadComment[] {
 
   // A deleted question with no replies left has nothing worth showing.
   return topLevel.filter((c) => !c.deleted || c.replies.length > 0);
-}
-
-function createComment(
-  userId: number,
-  lessonId: number,
-  parentId: number | null,
-  body: string
-) {
-  const trimmed = assertValidBody(body);
-
-  const course = getCourseForLesson(lessonId);
-  if (!course) {
-    throw new Error("Lesson not found");
-  }
-
-  if (parentId !== null) {
-    const parent = getCommentById(parentId);
-    if (!parent) {
-      throw new Error("Parent comment not found");
-    }
-    if (parent.lessonId !== lessonId) {
-      throw new Error("Parent comment belongs to a different lesson");
-    }
-    if (parent.parentId !== null) {
-      throw new Error("Replies can only be one level deep");
-    }
-  }
-
-  return db
-    .insert(comments)
-    .values({ userId, lessonId, parentId, body: trimmed })
-    .returning()
-    .get();
-}
-
-function updateComment(commentId: number, userId: number, body: string) {
-  const trimmed = assertValidBody(body);
-
-  const existing = getCommentById(commentId);
-  if (!existing) {
-    throw new Error("Comment not found");
-  }
-  if (existing.deletedAt !== null) {
-    throw new Error("Comment has been deleted");
-  }
-  if (existing.userId !== userId) {
-    throw new Error("You can only edit your own comments");
-  }
-
-  return db
-    .update(comments)
-    .set({ body: trimmed, editedAt: new Date().toISOString() })
-    .where(eq(comments.id, commentId))
-    .returning()
-    .get();
-}
-
-function deleteComment(commentId: number, userId: number, isStaff: boolean) {
-  const existing = getCommentById(commentId);
-  if (!existing) {
-    throw new Error("Comment not found");
-  }
-  if (existing.userId !== userId && !isStaff) {
-    throw new Error("You can only delete your own comments");
-  }
-  if (existing.deletedAt !== null) {
-    return existing;
-  }
-
-  return db
-    .update(comments)
-    .set({ deletedAt: new Date().toISOString() })
-    .where(eq(comments.id, commentId))
-    .returning()
-    .get();
 }
 
 function getQuizByLessonId(lessonId: number) {
@@ -639,7 +553,7 @@ function computeResult(userId: any, quizId: any, selectedAnswers: any): any {
 
 /**
  * Renders every comment body to sanitised HTML, preserving the reply nesting.
- * Comments are untrusted input, so this must be renderComment — never
+ * Comments are untrusted input, so this must be renderComment â€” never
  * renderMarkdown, which lets raw HTML through for trusted lesson content.
  */
 async function renderThread(
@@ -657,7 +571,7 @@ async function renderThread(
 export function meta({ loaderData }: Route.MetaArgs) {
   const title = loaderData?.lesson?.title ?? "Lesson";
   const courseTitle = loaderData?.course?.title ?? "Course";
-  return [{ title: `${title} — ${courseTitle} — Cadence` }];
+  return [{ title: `${title} â€” ${courseTitle} â€” Cadence` }];
 }
 
 type FlatLesson = {
@@ -760,7 +674,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     }
   }
 
-  // PPP Access Guard — resolved by getAccess, which treats a blocked user as
+  // PPP Access Guard â€” resolved by getAccess, which treats a blocked user as
   // having no access to the course's content at all.
   const { pppBlocked, pppBlockedCountry, pppPurchaseCountry, canViewContent } =
     access;
@@ -885,7 +799,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // Comment intents re-check access here rather than relying on the loader —
+  // Comment intents re-check access here rather than relying on the loader â€”
   // loader guards don't protect actions.
   if (
     intent === "create-comment" ||
@@ -901,10 +815,12 @@ export async function action({ params, request }: Route.ActionArgs) {
           return { ok: false, error: "Enter a comment before posting." };
         }
         createComment(
+          db,
           currentUserId,
           lessonId,
           parsed.data.parentId ?? null,
-          parsed.data.body
+          parsed.data.body,
+          getNotifications()
         );
         return { ok: true };
       }
@@ -916,11 +832,16 @@ export async function action({ params, request }: Route.ActionArgs) {
         }
         // Scope the id to this lesson so a comment elsewhere can't be reached
         // by posting its id to this route.
-        const existing = getCommentById(parsed.data.commentId);
+        const existing = getComment(db, parsed.data.commentId);
         if (!existing || existing.lessonId !== lessonId) {
           throw data("Comment not found", { status: 404 });
         }
-        updateComment(parsed.data.commentId, currentUserId, parsed.data.body);
+        updateComment(
+          db,
+          parsed.data.commentId,
+          currentUserId,
+          parsed.data.body
+        );
         return { ok: true };
       }
 
@@ -928,11 +849,11 @@ export async function action({ params, request }: Route.ActionArgs) {
       if (!parsed.success) {
         return { ok: false, error: "Could not delete that comment." };
       }
-      const existing = getCommentById(parsed.data.commentId);
+      const existing = getComment(db, parsed.data.commentId);
       if (!existing || existing.lessonId !== lessonId) {
         throw data("Comment not found", { status: 404 });
       }
-      deleteComment(parsed.data.commentId, currentUserId, access.isStaff);
+      deleteComment(db, parsed.data.commentId, currentUserId, access.isStaff);
       return { ok: true };
     } catch (error) {
       // Service validation failures are user-correctable; anything thrown as a
@@ -1240,7 +1161,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Questions & Discussion — confidential to people with access */}
+          {/* Questions & Discussion â€” confidential to people with access */}
           {canViewContent && (
             <CommentThread
               comments={comments}
@@ -1509,11 +1430,11 @@ function QuizSection({
                 <p
                   className={`text-lg font-semibold ${quizResult.passed ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}
                 >
-                  {quizResult.passed ? "You passed!" : "Not quite — try again!"}
+                  {quizResult.passed ? "You passed!" : "Not quite â€” try again!"}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Score: {quizResult.totalCorrect}/{quizResult.totalQuestions} (
-                  {Math.round(quizResult.score * 100)}%) — Grade:{" "}
+                  {Math.round(quizResult.score * 100)}%) â€” Grade:{" "}
                   {quizResult.grade}
                 </p>
               </div>
@@ -1551,7 +1472,7 @@ function QuizSection({
                           " text-red-600 dark:text-red-400 line-through";
                       return (
                         <p key={option.id} className={className}>
-                          {isCorrect ? "✓ " : isSelected ? "✗ " : "  "}
+                          {isCorrect ? "âœ“ " : isSelected ? "âœ— " : "  "}
                           {option.optionText}
                         </p>
                       );
@@ -1591,7 +1512,7 @@ function QuizSection({
               <Trophy className="size-5 text-green-600" />
               <span className="font-medium">{quiz.title}</span>
               <span className="text-sm text-muted-foreground">
-                — Best score: {Math.round(bestAttempt.score * 100)}%
+                â€” Best score: {Math.round(bestAttempt.score * 100)}%
               </span>
             </div>
             <Button
