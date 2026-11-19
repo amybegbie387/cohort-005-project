@@ -20,6 +20,7 @@ import {
   listRefundRequestsForReview,
   type RefundRequestForReview,
 } from "~/lib/refunds.server";
+import { getNotifications } from "~/lib/notifications-instance.server";
 import { RULE_BREAK_LABELS } from "~/lib/refund-rules";
 
 const refundFilterSchema = z
@@ -112,14 +113,16 @@ export async function action({ request }: Route.ActionArgs) {
           refundRequestId,
           platformAdmin.id,
           note || null,
-          new Date()
+          new Date(),
+          getNotifications()
         )
       : declineRefundRequest(
           db,
           refundRequestId,
           platformAdmin.id,
           note,
-          new Date()
+          new Date(),
+          getNotifications()
         );
 
   if (!result.ok) {

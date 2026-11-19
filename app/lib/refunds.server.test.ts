@@ -1,21 +1,71 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import { LessonProgressStatus, RefundStatus, UserRole } from "~/db/schema";
 import {
-  approveRefundRequest,
+  approveRefundRequest as approveWithNotifications,
   checkRefundRequest,
-  declineRefundRequest,
+  declineRefundRequest as declineWithNotifications,
   getRefundOffer,
   getSeatAvailability,
   listRefundRequestsForBuyer,
   listRefundRequestsForReview,
   listTeamLicences,
-  raiseRefundRequest,
+  raiseRefundRequest as raiseWithNotifications,
 } from "./refunds.server";
+import {
+  createFakeNotifications,
+  type FakeNotifications,
+  type NotificationService,
+} from "./notifications.server";
 
 type TestDb = ReturnType<typeof createTestDb>;
+
+// Tests that are not about Notifications leave the fake out; the ones that are
+// pass it explicitly.
+const raiseRefundRequest = (
+  db: TestDb,
+  purchaseId: number,
+  buyerId: number,
+  reason: string,
+  now: Date,
+  service: NotificationService = notifications
+) => raiseWithNotifications(db, purchaseId, buyerId, reason, now, service);
+
+const approveRefundRequest = (
+  db: TestDb,
+  refundRequestId: number,
+  platformAdminId: number,
+  note: string | null,
+  now: Date,
+  service: NotificationService = notifications
+) =>
+  approveWithNotifications(
+    db,
+    refundRequestId,
+    platformAdminId,
+    note,
+    now,
+    service
+  );
+
+const declineRefundRequest = (
+  db: TestDb,
+  refundRequestId: number,
+  platformAdminId: number,
+  note: string,
+  now: Date,
+  service: NotificationService = notifications
+) =>
+  declineWithNotifications(
+    db,
+    refundRequestId,
+    platformAdminId,
+    note,
+    now,
+    service
+  );
 
 const NOW = new Date(2026, 9, 6, 12, 0, 0);
 
@@ -29,8 +79,10 @@ let db: TestDb;
 let base: ReturnType<typeof seedBaseData>;
 let platformAdmin: typeof schema.users.$inferSelect;
 let lessonIds: number[];
+let notifications: FakeNotifications;
 
 beforeEach(() => {
+  notifications = createFakeNotifications();
   db = createTestDb();
   base = seedBaseData(db);
 
@@ -141,7 +193,8 @@ function raise(purchaseId: number, buyerId: number) {
     purchaseId,
     buyerId,
     "It was not what I expected.",
-    NOW
+    NOW,
+    notifications
   );
   if (!result.ok) throw new Error(result.error);
   return result.refundRequestId;
@@ -500,5 +553,225 @@ describe("listing Refund Requests", () => {
       { seatCount: 2, claimedSeatCount: 1, canRequestRefund: false },
       { seatCount: 2, claimedSeatCount: 0, canRequestRefund: true },
     ]);
+  });
+});
+
+describe("Refund Request Notifications", () => {
+  it("confirms a raised Refund Request to the buyer, from Cadence, with no link", () => {
+    const purchase = buyForSelf(base.user.id);
+
+    const id = raise(purchase.id, base.user.id);
+
+    expect(
+      notifications.triggers.filter((t) => t.event === "refund-confirmed")
+    ).toEqual([
+      {
+        event: "refund-confirmed",
+        category: "refund-request-updates",
+        recipient: {
+          id: base.user.id,
+          name: "Test User",
+          email: "test@example.com",
+          avatarUrl: null,
+        },
+        idempotencyKey: `refund-confirmed:${id}`,
+        data: {
+          sender: null,
+          link: null,
+          refundRequestId: id,
+          purchaseId: purchase.id,
+          courseId: base.course.id,
+          courseTitle: "Test Course",
+          courseSlug: "test-course",
+          amount: 7900,
+          reason: "It was not what I expected.",
+          decisionNote: null,
+        },
+      },
+    ]);
+  });
+
+  it("notifies every Platform Admin of an Open Refund Request, from the buyer, linking to the refunds page", () => {
+    const secondAdmin = db
+      .insert(schema.users)
+      .values({ name: "Sam Admin", email: "sam@example.com", role: UserRole.Admin })
+      .returning()
+      .get();
+    const purchase = buyForSelf(base.user.id);
+
+    const id = raise(purchase.id, base.user.id);
+
+    const opened = notifications.triggers.filter(
+      (t) => t.event === "refund-opened"
+    );
+    expect(opened.map((t) => t.recipient.id).sort()).toEqual(
+      [platformAdmin.id, secondAdmin.id].sort()
+    );
+    expect(opened[0]).toMatchObject({
+      category: "open-refund-requests",
+      idempotencyKey: `refund-opened:${id}`,
+      data: {
+        sender: { id: base.user.id, name: "Test User", avatarUrl: null },
+        link: "/admin/refunds",
+        refundRequestId: id,
+        courseTitle: "Test Course",
+        amount: 7900,
+        reason: "It was not what I expected.",
+      },
+    });
+  });
+
+  it("only notifies admins who exist when the request is raised", () => {
+    const purchase = buyForSelf(base.user.id);
+    raise(purchase.id, base.user.id);
+    const promoted = addLearner("Ben");
+    db.update(schema.users)
+      .set({ role: UserRole.Admin })
+      .where(eq(schema.users.id, promoted.id))
+      .run();
+
+    expect(
+      notifications.triggers.filter((t) => t.recipient.id === promoted.id)
+    ).toEqual([]);
+  });
+
+  it("does not notify a Platform Admin of their own request", () => {
+    const purchase = buyForSelf(platformAdmin.id);
+
+    raise(purchase.id, platformAdmin.id);
+
+    expect(
+      notifications.triggers.filter((t) => t.event === "refund-opened")
+    ).toEqual([]);
+    expect(
+      notifications.triggers.filter((t) => t.event === "refund-confirmed")
+    ).toHaveLength(1);
+  });
+
+  it("tells the buyer their Refund Request was approved, with the course, amount and note", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    notifications.triggers.length = 0;
+
+    approveRefundRequest(db, id, platformAdmin.id, "Sorry it missed.", NOW, notifications);
+
+    expect(notifications.triggers).toEqual([
+      {
+        event: "refund-approved",
+        category: "refund-request-updates",
+        recipient: {
+          id: base.user.id,
+          name: "Test User",
+          email: "test@example.com",
+          avatarUrl: null,
+        },
+        idempotencyKey: `refund-approved:${id}`,
+        data: {
+          sender: { id: platformAdmin.id, name: "Pat Admin", avatarUrl: null },
+          link: "/settings",
+          refundRequestId: id,
+          purchaseId: purchase.id,
+          courseId: base.course.id,
+          courseTitle: "Test Course",
+          courseSlug: "test-course",
+          amount: 7900,
+          reason: null,
+          decisionNote: "Sorry it missed.",
+        },
+      },
+    ]);
+  });
+
+  it("tells the buyer their Refund Request was declined, with the note", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    notifications.triggers.length = 0;
+
+    declineRefundRequest(db, id, platformAdmin.id, "Past half way.", NOW, notifications);
+
+    expect(notifications.triggers).toMatchObject([
+      {
+        event: "refund-declined",
+        category: "refund-request-updates",
+        recipient: { id: base.user.id },
+        idempotencyKey: `refund-declined:${id}`,
+        data: {
+          sender: { id: platformAdmin.id },
+          link: "/settings",
+          courseTitle: "Test Course",
+          amount: 7900,
+          decisionNote: "Past half way.",
+        },
+      },
+    ]);
+  });
+
+  it("notifies a Team Admin of a decision on their Team Licence and links to the team page", () => {
+    const priya = addLearner("Priya");
+    const { purchase } = buySeats(priya.id, 2);
+    const id = raise(purchase.id, priya.id);
+    notifications.triggers.length = 0;
+
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW, notifications);
+
+    expect(notifications.triggers).toMatchObject([
+      {
+        event: "refund-approved",
+        recipient: { id: priya.id },
+        data: { link: "/team", amount: 15800, decisionNote: null },
+      },
+    ]);
+  });
+
+  it("sends nothing when a decision is refused", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW, notifications);
+    notifications.triggers.length = 0;
+
+    declineRefundRequest(db, id, platformAdmin.id, "Too late.", NOW, notifications);
+    declineRefundRequest(db, id, platformAdmin.id, "  ", NOW, notifications);
+
+    expect(notifications.triggers).toEqual([]);
+  });
+
+  it("does not notify a Platform Admin of deciding their own request, nor remove other admins' Notifications", () => {
+    const purchase = buyForSelf(platformAdmin.id);
+    const id = raise(purchase.id, platformAdmin.id);
+    notifications.triggers.length = 0;
+
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW, notifications);
+
+    expect(notifications.triggers).toEqual([]);
+    expect(notifications.archivedCommentIds).toEqual([]);
+  });
+
+  it("never fails a Refund Request action when a Notification cannot be sent", async () => {
+    const failing = {
+      ...notifications,
+      trigger: () => Promise.reject(new Error("vendor down")),
+    };
+    const throwing = {
+      ...notifications,
+      trigger: (): Promise<void> => {
+        throw new Error("vendor down");
+      },
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    for (const [i, broken] of [failing, throwing].entries()) {
+      const buyer = addLearner(`Buyer${i}`);
+      const purchase = buyForSelf(buyer.id);
+      const result = raiseRefundRequest(db, purchase.id, buyer.id, "Nope, thanks.", NOW, broken);
+      if (!result.ok) throw new Error(result.error);
+      expect(
+        approveRefundRequest(db, result.refundRequestId, platformAdmin.id, null, NOW, broken)
+      ).toMatchObject({ ok: true });
+      expect(isEnrolled(buyer.id)).toBe(false);
+    }
+    await Promise.resolve();
+
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });

@@ -7,6 +7,7 @@ import { courses, purchases } from "~/db/schema";
 import { eq } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
 import { raiseRefundRequest } from "~/lib/refunds.server";
+import { getNotifications } from "~/lib/notifications-instance.server";
 
 const refundParamsSchema = z.object({
   slug: z.string().min(1),
@@ -64,7 +65,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     purchase.id,
     currentUserId,
     parsed.data.reason,
-    new Date()
+    new Date(),
+    getNotifications()
   );
 
   if (!result.ok) {

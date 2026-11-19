@@ -1,4 +1,14 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  sql,
+} from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { alias } from "drizzle-orm/sqlite-core";
 import * as schema from "~/db/schema";
@@ -15,8 +25,16 @@ import {
   videoWatchEvents,
   LessonProgressStatus,
   RefundStatus,
+  UserRole,
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
+import {
+  triggerSafely,
+  type NotificationData,
+  type NotificationSender,
+  type NotificationService,
+  type NotificationUser,
+} from "~/lib/notifications.server";
 import {
   REFUND_COMPLETION_LIMIT,
   REFUND_WATCH_LIMIT_SECONDS,
@@ -259,7 +277,11 @@ function findRuleBreaks(
 
 // ─── Raising a Refund Request ───
 
-export type Failure = { ok: false; status: 400 | 403 | 404 | 409; error: string };
+export type Failure = {
+  ok: false;
+  status: 400 | 403 | 404 | 409;
+  error: string;
+};
 
 type RefundCheck = { ok: true; purchase: Purchase } | Failure;
 
@@ -350,6 +372,48 @@ export function getRefundOffer(
 
 export type Email = { to: string; subject: string; body: string };
 
+const REFUNDS_ADMIN_PATH = "/admin/refunds";
+
+type User = typeof users.$inferSelect;
+type Course = typeof courses.$inferSelect;
+
+function toNotificationUser(user: User): NotificationUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+  };
+}
+
+function toNotificationSender(user: User): NotificationSender {
+  return { id: user.id, name: user.name, avatarUrl: user.avatarUrl };
+}
+
+// What the Notification Feed needs to write a Refund Request row later.
+function refundNotificationData(fields: {
+  refundRequestId: number;
+  purchase: Purchase;
+  course: Course;
+  sender: NotificationSender;
+  link: string | null;
+  reason: string | null;
+  decisionNote: string | null;
+}): NotificationData {
+  return {
+    sender: fields.sender,
+    link: fields.link,
+    refundRequestId: fields.refundRequestId,
+    purchaseId: fields.purchase.id,
+    courseId: fields.course.id,
+    courseTitle: fields.course.title,
+    courseSlug: fields.course.slug,
+    amount: fields.purchase.amountPaid,
+    reason: fields.reason,
+    decisionNote: fields.decisionNote,
+  };
+}
+
 export type RaiseResult =
   | { ok: true; refundRequestId: number; kind: PurchaseKind; email: Email }
   | Failure;
@@ -359,7 +423,8 @@ export function raiseRefundRequest(
   purchaseId: number,
   buyerId: number,
   reason: string,
-  now: Date
+  now: Date,
+  notifications: NotificationService
 ): RaiseResult {
   const check = checkRefundRequest(db, purchaseId, buyerId, now);
   if (!check.ok) return check;
@@ -387,10 +452,49 @@ export function raiseRefundRequest(
     .returning()
     .get();
 
+  const kind = kindOf(getSeats(db, purchase.id));
+
+  const data = (link: string | null, sender: NotificationSender) =>
+    refundNotificationData({
+      refundRequestId: refundRequest.id,
+      purchase,
+      course,
+      sender,
+      link,
+      reason,
+      decisionNote: null,
+    });
+
+  triggerSafely(notifications, {
+    event: "refund-confirmed",
+    category: "refund-request-updates",
+    recipient: toNotificationUser(buyer),
+    idempotencyKey: `refund-confirmed:${refundRequest.id}`,
+    data: data(null, null),
+  });
+
+  // Recipients are read from Cadence's own users now, so a role change needs
+  // no sync to the vendor, and an admin promoted later hears nothing of it.
+  const otherPlatformAdmins = db
+    .select()
+    .from(users)
+    .where(and(eq(users.role, UserRole.Admin), ne(users.id, buyer.id)))
+    .all();
+
+  for (const platformAdmin of otherPlatformAdmins) {
+    triggerSafely(notifications, {
+      event: "refund-opened",
+      category: "open-refund-requests",
+      recipient: toNotificationUser(platformAdmin),
+      idempotencyKey: `refund-opened:${refundRequest.id}`,
+      data: data(REFUNDS_ADMIN_PATH, toNotificationSender(buyer)),
+    });
+  }
+
   return {
     ok: true,
     refundRequestId: refundRequest.id,
-    kind: kindOf(getSeats(db, purchase.id)),
+    kind,
     email: {
       to: buyer.email,
       subject: `Refund requested — ${course.title}`,
@@ -500,7 +604,8 @@ export function listRefundRequestsForReview(
       // A Claimed Seat belongs to another learner, so the only way out of
       // that request is a decline. See docs/adr/0003.
       canApprove:
-        row.status === RefundStatus.Open && !ruleBreaks.includes("seat_claimed"),
+        row.status === RefundStatus.Open &&
+        !ruleBreaks.includes("seat_claimed"),
     };
   });
 }
@@ -616,9 +721,10 @@ export function approveRefundRequest(
   refundRequestId: number,
   platformAdminId: number,
   note: string | null,
-  now: Date
+  now: Date,
+  notifications: NotificationService
 ): DecisionResult {
-  return db.transaction((tx): DecisionResult => {
+  const result = db.transaction((tx): DecisionResult => {
     const found = findOpenRefundRequest(tx, refundRequestId);
     if (!found.ok) return found;
 
@@ -682,6 +788,11 @@ export function approveRefundRequest(
       email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
     };
   });
+
+  if (result.ok) {
+    notifyBuyerOfDecision(db, refundRequestId, platformAdminId, notifications);
+  }
+  return result;
 }
 
 /**
@@ -694,7 +805,8 @@ export function declineRefundRequest(
   refundRequestId: number,
   platformAdminId: number,
   note: string,
-  now: Date
+  now: Date,
+  notifications: NotificationService
 ): DecisionResult {
   const trimmedNote = note.trim();
 
@@ -706,7 +818,7 @@ export function declineRefundRequest(
     };
   }
 
-  return db.transaction((tx): DecisionResult => {
+  const result = db.transaction((tx): DecisionResult => {
     const found = findOpenRefundRequest(tx, refundRequestId);
     if (!found.ok) return found;
 
@@ -729,6 +841,72 @@ export function declineRefundRequest(
         trimmedNote
       ),
     };
+  });
+
+  if (result.ok) {
+    notifyBuyerOfDecision(db, refundRequestId, platformAdminId, notifications);
+  }
+  return result;
+}
+
+/**
+ * Tells the buyer how their Refund Request was decided. Runs after the
+ * decision commits and reads what was committed. A Platform Admin who decides
+ * their own request is not told of their own action.
+ */
+function notifyBuyerOfDecision(
+  db: Db,
+  refundRequestId: number,
+  platformAdminId: number,
+  notifications: NotificationService
+) {
+  const refundRequest = db
+    .select()
+    .from(refunds)
+    .where(eq(refunds.id, refundRequestId))
+    .get();
+  const purchase = refundRequest && getPurchase(db, refundRequest.purchaseId);
+  if (!refundRequest || !purchase || purchase.userId === platformAdminId)
+    return;
+
+  const buyer = db
+    .select()
+    .from(users)
+    .where(eq(users.id, purchase.userId))
+    .get();
+  const platformAdmin = db
+    .select()
+    .from(users)
+    .where(eq(users.id, platformAdminId))
+    .get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+  if (!buyer || !platformAdmin || !course) return;
+
+  const approved = refundRequest.status === RefundStatus.Approved;
+  const event = approved ? "refund-approved" : "refund-declined";
+  const buyerPage =
+    kindOf(getSeats(db, purchase.id)) === "team_licence"
+      ? "/team"
+      : "/settings";
+
+  triggerSafely(notifications, {
+    event,
+    category: "refund-request-updates",
+    recipient: toNotificationUser(buyer),
+    idempotencyKey: `${event}:${refundRequest.id}`,
+    data: refundNotificationData({
+      refundRequestId: refundRequest.id,
+      purchase,
+      course,
+      sender: toNotificationSender(platformAdmin),
+      link: buyerPage,
+      reason: null,
+      decisionNote: refundRequest.decisionNote,
+    }),
   });
 }
 

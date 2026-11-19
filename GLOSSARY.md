@@ -90,3 +90,13 @@ _Avoid_: Completed, Paid out
 
 **Failed Refund**:
 A Refund where the money couldn't be sent. The Refund Request stays approved, because the decision hasn't changed.
+
+### Notifications
+
+**Notification**:
+A message telling one user about an event that concerns them and was caused by someone else or by the system, never by themselves. The one exception is the confirmation of a Refund Request, which tells its buyer a request is waiting on someone else's decision. A Notification is a snapshot of the moment it was sent: later edits don't change it.
+_Avoid_: Alert, Message, Push
+
+**Notification Feed**:
+A user's chronological list of Notifications inside Cadence, newest first, reached from the bell in the sidebar header. It keeps every Notification, read or not.
+_Avoid_: Inbox, Notification centre, Activity feed
