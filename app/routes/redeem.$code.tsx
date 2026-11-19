@@ -117,15 +117,15 @@ export async function action({ params, request }: Route.ActionArgs) {
   }
 
   const userCountry = await resolveCountry(request);
-  let enrollment;
+  let claim: ReturnType<typeof claimSeat>;
   try {
-    ({ enrollment } = claimSeat(
+    claim = claimSeat(
       db,
       code,
       currentUserId,
       userCountry ?? "",
       getNotifications()
-    ));
+    );
   } catch (error) {
     if (error instanceof SeatClaimError) {
       return data({ error: error.message }, { status: 400 });
@@ -133,7 +133,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw error;
   }
 
-  const course = getCourseById(enrollment.courseId);
+  const course = getCourseById(claim.enrollment.courseId);
   if (!course) {
     throw redirect("/courses");
   }

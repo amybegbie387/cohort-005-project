@@ -10,6 +10,7 @@ import {
   type RenderedComment,
 } from "~/components/comment-thread";
 import {
+  CommentError,
   createComment,
   deleteComment,
   getComment,
@@ -553,7 +554,7 @@ function computeResult(userId: any, quizId: any, selectedAnswers: any): any {
 
 /**
  * Renders every comment body to sanitised HTML, preserving the reply nesting.
- * Comments are untrusted input, so this must be renderComment â€” never
+ * Comments are untrusted input, so this must be renderComment — never
  * renderMarkdown, which lets raw HTML through for trusted lesson content.
  */
 async function renderThread(
@@ -571,7 +572,7 @@ async function renderThread(
 export function meta({ loaderData }: Route.MetaArgs) {
   const title = loaderData?.lesson?.title ?? "Lesson";
   const courseTitle = loaderData?.course?.title ?? "Course";
-  return [{ title: `${title} â€” ${courseTitle} â€” Cadence` }];
+  return [{ title: `${title} — ${courseTitle} — Cadence` }];
 }
 
 type FlatLesson = {
@@ -674,7 +675,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     }
   }
 
-  // PPP Access Guard â€” resolved by getAccess, which treats a blocked user as
+  // PPP Access Guard — resolved by getAccess, which treats a blocked user as
   // having no access to the course's content at all.
   const { pppBlocked, pppBlockedCountry, pppPurchaseCountry, canViewContent } =
     access;
@@ -799,7 +800,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // Comment intents re-check access here rather than relying on the loader â€”
+  // Comment intents re-check access here rather than relying on the loader —
   // loader guards don't protect actions.
   if (
     intent === "create-comment" ||
@@ -862,9 +863,9 @@ export async function action({ params, request }: Route.ActionArgs) {
       );
       return { ok: true };
     } catch (error) {
-      // Service validation failures are user-correctable; anything thrown as a
-      // Response (404 above) should keep bubbling.
-      if (error instanceof Error) {
+      // Service validation failures are user-correctable; anything else
+      // (including the 404 thrown above) should keep bubbling.
+      if (error instanceof CommentError) {
         return { ok: false, error: error.message };
       }
       throw error;
@@ -1167,7 +1168,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Questions & Discussion â€” confidential to people with access */}
+          {/* Questions & Discussion — confidential to people with access */}
           {canViewContent && (
             <CommentThread
               comments={comments}
@@ -1436,11 +1437,11 @@ function QuizSection({
                 <p
                   className={`text-lg font-semibold ${quizResult.passed ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}
                 >
-                  {quizResult.passed ? "You passed!" : "Not quite â€” try again!"}
+                  {quizResult.passed ? "You passed!" : "Not quite — try again!"}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Score: {quizResult.totalCorrect}/{quizResult.totalQuestions} (
-                  {Math.round(quizResult.score * 100)}%) â€” Grade:{" "}
+                  {Math.round(quizResult.score * 100)}%) — Grade:{" "}
                   {quizResult.grade}
                 </p>
               </div>
@@ -1478,7 +1479,7 @@ function QuizSection({
                           " text-red-600 dark:text-red-400 line-through";
                       return (
                         <p key={option.id} className={className}>
-                          {isCorrect ? "âœ“ " : isSelected ? "âœ— " : "  "}
+                          {isCorrect ? "✓ " : isSelected ? "✗ " : "  "}
                           {option.optionText}
                         </p>
                       );
@@ -1518,7 +1519,7 @@ function QuizSection({
               <Trophy className="size-5 text-green-600" />
               <span className="font-medium">{quiz.title}</span>
               <span className="text-sm text-muted-foreground">
-                â€” Best score: {Math.round(bestAttempt.score * 100)}%
+                — Best score: {Math.round(bestAttempt.score * 100)}%
               </span>
             </div>
             <Button

@@ -33,6 +33,18 @@ export type NotificationCategory =
 /** Only the Feed exists in v1. Email would be a second channel. */
 export type NotificationChannel = "feed";
 
+/** The one category each event belongs to, so the two cannot disagree. */
+export const NOTIFICATION_EVENT_CATEGORIES = {
+  "refund-confirmed": "refund-request-updates",
+  "refund-approved": "refund-request-updates",
+  "refund-declined": "refund-request-updates",
+  "refund-opened": "open-refund-requests",
+  "seat-claimed": "seat-claims",
+  "enrollment-created": "enrollments",
+  "discussion-question-asked": "discussion-questions",
+  "discussion-reply-posted": "discussion-replies",
+} as const satisfies Record<NotificationEvent, NotificationCategory>;
+
 export type NotificationUser = {
   id: number;
   name: string;
@@ -46,6 +58,23 @@ export type NotificationSender = {
   name: string;
   avatarUrl: string | null;
 } | null;
+
+/** Narrows a Cadence user to what the vendor may know about a recipient. */
+export function toNotificationUser(user: NotificationUser): NotificationUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+  };
+}
+
+/** Narrows a Cadence user to what a Notification shows of its sender. */
+export function toNotificationSender(
+  user: Pick<NotificationUser, "id" | "name" | "avatarUrl">
+): NonNullable<NotificationSender> {
+  return { id: user.id, name: user.name, avatarUrl: user.avatarUrl };
+}
 
 /**
  * A Notification is a snapshot taken when it is sent, and the Feed writes its

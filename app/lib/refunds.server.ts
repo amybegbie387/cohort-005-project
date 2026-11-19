@@ -1,14 +1,4 @@
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { alias } from "drizzle-orm/sqlite-core";
 import * as schema from "~/db/schema";
@@ -29,11 +19,13 @@ import {
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
 import {
+  NOTIFICATION_EVENT_CATEGORIES,
+  toNotificationSender,
+  toNotificationUser,
   triggerSafely,
   type NotificationData,
   type NotificationSender,
   type NotificationService,
-  type NotificationUser,
 } from "~/lib/notifications.server";
 import {
   REFUND_COMPLETION_LIMIT,
@@ -277,11 +269,7 @@ function findRuleBreaks(
 
 // ─── Raising a Refund Request ───
 
-export type Failure = {
-  ok: false;
-  status: 400 | 403 | 404 | 409;
-  error: string;
-};
+export type Failure = { ok: false; status: 400 | 403 | 404 | 409; error: string };
 
 type RefundCheck = { ok: true; purchase: Purchase } | Failure;
 
@@ -374,21 +362,7 @@ export type Email = { to: string; subject: string; body: string };
 
 const REFUNDS_ADMIN_PATH = "/admin/refunds";
 
-type User = typeof users.$inferSelect;
 type Course = typeof courses.$inferSelect;
-
-function toNotificationUser(user: User): NotificationUser {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    avatarUrl: user.avatarUrl,
-  };
-}
-
-function toNotificationSender(user: User): NotificationSender {
-  return { id: user.id, name: user.name, avatarUrl: user.avatarUrl };
-}
 
 // What the Notification Feed needs to write a Refund Request row later.
 function refundNotificationData(fields: {
@@ -467,7 +441,7 @@ export function raiseRefundRequest(
 
   triggerSafely(notifications, {
     event: "refund-confirmed",
-    category: "refund-request-updates",
+    category: NOTIFICATION_EVENT_CATEGORIES["refund-confirmed"],
     recipient: toNotificationUser(buyer),
     idempotencyKey: `refund-confirmed:${refundRequest.id}`,
     data: data(null, null),
@@ -484,7 +458,7 @@ export function raiseRefundRequest(
   for (const platformAdmin of otherPlatformAdmins) {
     triggerSafely(notifications, {
       event: "refund-opened",
-      category: "open-refund-requests",
+      category: NOTIFICATION_EVENT_CATEGORIES["refund-opened"],
       recipient: toNotificationUser(platformAdmin),
       idempotencyKey: `refund-opened:${refundRequest.id}`,
       data: data(REFUNDS_ADMIN_PATH, toNotificationSender(buyer)),
@@ -604,8 +578,7 @@ export function listRefundRequestsForReview(
       // A Claimed Seat belongs to another learner, so the only way out of
       // that request is a decline. See docs/adr/0003.
       canApprove:
-        row.status === RefundStatus.Open &&
-        !ruleBreaks.includes("seat_claimed"),
+        row.status === RefundStatus.Open && !ruleBreaks.includes("seat_claimed"),
     };
   });
 }
@@ -895,7 +868,7 @@ function notifyBuyerOfDecision(
 
   triggerSafely(notifications, {
     event,
-    category: "refund-request-updates",
+    category: NOTIFICATION_EVENT_CATEGORIES[event],
     recipient: toNotificationUser(buyer),
     idempotencyKey: `${event}:${refundRequest.id}`,
     data: refundNotificationData({

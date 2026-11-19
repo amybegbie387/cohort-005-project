@@ -7,10 +7,12 @@
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
-import type {
-  NotificationCategory,
-  NotificationChannel,
-  NotificationService,
+import {
+  toNotificationUser,
+  type NotificationCategory,
+  type NotificationChannel,
+  type NotificationService,
+  type NotificationUser,
 } from "~/lib/notifications.server";
 
 type Db = BetterSQLite3Database<typeof schema>;
@@ -28,13 +30,6 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
   Record<NotificationChannel, boolean>
 >;
 
-type SyncableUser = {
-  id: number;
-  name: string;
-  email: string;
-  avatarUrl: string | null;
-};
-
 /**
  * Sets the user's name, email and avatar at the vendor, and writes the default
  * preferences only if they have none yet, so a re-sync never undoes their
@@ -43,15 +38,10 @@ type SyncableUser = {
  */
 export async function syncNotificationUser(
   notifications: NotificationService,
-  user: SyncableUser
+  user: NotificationUser
 ): Promise<boolean> {
   try {
-    await notifications.syncUser({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      avatarUrl: user.avatarUrl,
-    });
+    await notifications.syncUser(toNotificationUser(user));
     if ((await notifications.getPreferences(user.id)) === null) {
       await notifications.mergePreferences(
         user.id,

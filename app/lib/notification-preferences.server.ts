@@ -3,7 +3,7 @@
 // an injected parameter, like the other services. A save merges one category
 // into the person's preference set; it never replaces the set.
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
 import {
@@ -50,16 +50,22 @@ export async function getNotificationSwitches(
       .where(eq(schema.purchases.userId, userId))
       .limit(1)
       .get() !== undefined;
-  const isTeamAdmin =
+  const boughtTeamLicence =
     db
-      .select({ id: schema.teamMembers.id })
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.userId, userId),
-          eq(schema.teamMembers.role, schema.TeamMemberRole.Admin)
-        )
+      .select({ id: schema.coupons.id })
+      .from(schema.coupons)
+      .innerJoin(
+        schema.purchases,
+        eq(schema.coupons.purchaseId, schema.purchases.id)
       )
+      .where(eq(schema.purchases.userId, userId))
+      .limit(1)
+      .get() !== undefined;
+  const teachesACourse =
+    db
+      .select({ id: schema.courses.id })
+      .from(schema.courses)
+      .where(eq(schema.courses.instructorId, userId))
       .limit(1)
       .get() !== undefined;
 
@@ -68,7 +74,8 @@ export async function getNotificationSwitches(
   return visibleNotificationCategories({
     role: user.role,
     hasPurchase,
-    isTeamAdmin,
+    boughtTeamLicence,
+    teachesACourse,
   }).map((category) => ({
     category,
     label: NOTIFICATION_CATEGORY_LABELS[category],
@@ -90,8 +97,10 @@ async function readPreferences(
 }
 
 /**
- * Saves one switch: only that category's feed channel is written, merged into
- * the existing set. Throws if the save fails, so the caller can tell the person.
+ * Saves one switch, merged into the existing set. Any category the person has
+ * no stored choice for gets its default in the same write, so a first flip can
+ * never leave Enrollments to the vendor's own default. Throws if the read or
+ * the save fails, so the caller can tell the person.
  */
 export async function saveNotificationSwitch(
   notifications: NotificationService,
@@ -99,7 +108,17 @@ export async function saveNotificationSwitch(
   category: NotificationCategory,
   enabled: boolean
 ): Promise<void> {
-  await notifications.mergePreferences(userId, {
-    [category]: { feed: enabled },
-  });
+  const stored = await notifications.getPreferences(userId);
+
+  const changes: NotificationPreferences = {};
+  for (const known of Object.keys(
+    DEFAULT_NOTIFICATION_PREFERENCES
+  ) as NotificationCategory[]) {
+    if (stored?.[known]?.feed === undefined) {
+      changes[known] = DEFAULT_NOTIFICATION_PREFERENCES[known];
+    }
+  }
+  changes[category] = { feed: enabled };
+
+  await notifications.mergePreferences(userId, changes);
 }

@@ -6,6 +6,8 @@
 // One client is one signed-in user's connection. Make a new one when the
 // user changes, and `teardown` the old one.
 
+import type { NotificationEvent } from "~/lib/notifications.server";
+
 /** What the browser needs to connect. Never holds a secret. */
 export type FeedConfig = {
   publicApiKey: string;
@@ -22,7 +24,7 @@ export type FeedSender = {
 export type FeedNotification = {
   id: string;
   /** The catalogue event, e.g. `discussion-reply-posted`. */
-  event: string;
+  event: NotificationEvent;
   sender: FeedSender;
   /** Where clicking goes; `null` when it goes nowhere. */
   link: string | null;

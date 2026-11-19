@@ -12,6 +12,7 @@ import type {
   FeedUpdate,
   NotificationFeedClient,
 } from "~/lib/notification-feed-client";
+import type { NotificationEvent } from "~/lib/notifications.server";
 
 // ─── Knock client adapter ───
 // The only browser code that knows Knock exists. It maps Knock feed items to
@@ -51,7 +52,8 @@ function toNotification(item: FeedItem): FeedNotification {
   const data = asRecord(item.data);
   return {
     id: item.id,
-    event: item.source.key,
+    // The workflow key is the event; an unknown one still renders generically.
+    event: item.source.key as NotificationEvent,
     sender: toSender(item),
     link: typeof data.link === "string" && data.link ? data.link : null,
     data,

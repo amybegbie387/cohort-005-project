@@ -3,7 +3,12 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import { UserRole } from "~/db/schema";
-import { createComment, deleteComment, updateComment } from "./comments.server";
+import {
+  CommentError,
+  createComment,
+  deleteComment,
+  updateComment,
+} from "./comments.server";
 import { MAX_COMMENT_LENGTH } from "./comments";
 import {
   createFakeNotifications,
@@ -330,6 +335,29 @@ describe("comment validation", () => {
     expect(() =>
       createComment(db, student.id, lessonId, reply.id, "B", notifications)
     ).toThrow("Replies can only be one level deep");
+  });
+
+  it("fails with a CommentError, which routes can tell apart from a bug", () => {
+    const student = addUser("Sam Student");
+    const question = ask(student.id);
+    const other = addUser("Olly Other");
+
+    expect(() => ask(student.id, "")).toThrow(CommentError);
+    expect(() =>
+      createComment(db, student.id, 9999, null, "Hi", notifications)
+    ).toThrow(CommentError);
+    expect(() => updateComment(db, question.id, other.id, "Hijack")).toThrow(
+      CommentError
+    );
+    expect(() => updateComment(db, 9999, student.id, "Hi")).toThrow(
+      CommentError
+    );
+    expect(() =>
+      deleteComment(db, question.id, other.id, false, notifications)
+    ).toThrow(CommentError);
+    expect(() =>
+      deleteComment(db, 9999, base.user.id, true, notifications)
+    ).toThrow(CommentError);
   });
 
   it("notifies nobody when validation fails", () => {

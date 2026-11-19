@@ -213,15 +213,19 @@ export function NotificationBell() {
   // The popover sits beside the whole sidebar, not beside the bell inside it.
   const anchorRef = useRef<HTMLElement | null>(null);
 
+  const markAllSeen = feed?.markAllSeen;
+  const newestId = feed?.items[0]?.id;
+
+  // Opening marks everything seen, and so does anything that arrives (or
+  // finishes loading) while the popover stays open. Seen is not read: rows
+  // stay unread until acted on.
+  useEffect(() => {
+    if (open) markAllSeen?.();
+  }, [open, newestId, markAllSeen]);
+
   if (!feed) return null;
 
   const badge = formatBadgeCount(feed.counts.unseen);
-
-  function handleOpenChange(next: boolean) {
-    setOpen(next);
-    // Seen is not read: rows stay unread until acted on.
-    if (next) feed?.markAllSeen();
-  }
 
   function select(item: FeedNotification) {
     feed?.markRead(item.id);
@@ -233,7 +237,7 @@ export function NotificationBell() {
   }
 
   return (
-    <Popover.Root open={open} onOpenChange={handleOpenChange}>
+    <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Anchor virtualRef={anchorRef} />
       <Popover.Trigger asChild>
         <button

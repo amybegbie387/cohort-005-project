@@ -8,27 +8,30 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
 import { MAX_COMMENT_LENGTH, MIN_COMMENT_LENGTH } from "~/lib/comments";
 import {
+  NOTIFICATION_EVENT_CATEGORIES,
   archiveForCommentSafely,
+  toNotificationSender,
+  toNotificationUser,
   triggerSafely,
-  type NotificationSender,
   type NotificationService,
-  type NotificationUser,
 } from "~/lib/notifications.server";
 
 type Db = BetterSQLite3Database<typeof schema>;
-type User = typeof schema.users.$inferSelect;
 
 const { comments, courses, lessons, modules, users } = schema;
 
 const SNIPPET_LENGTH = 120;
 
+/** The comment can't go ahead for a reason the user can read and fix. */
+export class CommentError extends Error {}
+
 function assertValidBody(body: string) {
   const trimmed = body.trim();
   if (trimmed.length < MIN_COMMENT_LENGTH) {
-    throw new Error("Comment cannot be empty");
+    throw new CommentError("Comment cannot be empty");
   }
   if (trimmed.length > MAX_COMMENT_LENGTH) {
-    throw new Error(
+    throw new CommentError(
       `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`
     );
   }
@@ -56,19 +59,6 @@ export function getComment(db: Db, commentId: number) {
   return db.select().from(comments).where(eq(comments.id, commentId)).get();
 }
 
-function toNotificationUser(user: User): NotificationUser {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    avatarUrl: user.avatarUrl,
-  };
-}
-
-function toNotificationSender(user: User): NotificationSender {
-  return { id: user.id, name: user.name, avatarUrl: user.avatarUrl };
-}
-
 function toSnippet(body: string) {
   const oneLine = body.replace(/\s+/g, " ").trim();
   return oneLine.length > SNIPPET_LENGTH
@@ -78,7 +68,7 @@ function toSnippet(body: string) {
 
 /**
  * Creates a Discussion Question (no parent) or a Discussion Reply, then
- * notifies whoever it concerns. Throws an Error for anything the user can fix.
+ * notifies whoever it concerns. Throws a CommentError for anything the user can fix.
  */
 export function createComment(
   db: Db,
@@ -92,19 +82,19 @@ export function createComment(
 
   const lesson = getLessonContext(db, lessonId);
   if (!lesson) {
-    throw new Error("Lesson not found");
+    throw new CommentError("Lesson not found");
   }
 
   const parent = parentId === null ? null : getComment(db, parentId);
   if (parentId !== null) {
     if (!parent) {
-      throw new Error("Parent comment not found");
+      throw new CommentError("Parent comment not found");
     }
     if (parent.lessonId !== lessonId) {
-      throw new Error("Parent comment belongs to a different lesson");
+      throw new CommentError("Parent comment belongs to a different lesson");
     }
     if (parent.parentId !== null) {
-      throw new Error("Replies can only be one level deep");
+      throw new CommentError("Replies can only be one level deep");
     }
   }
 
@@ -133,7 +123,7 @@ export function createComment(
       : "discussion-question-asked";
     triggerSafely(notifications, {
       event,
-      category: isReply ? "discussion-replies" : "discussion-questions",
+      category: NOTIFICATION_EVENT_CATEGORIES[event],
       recipient: toNotificationUser(recipient),
       idempotencyKey: `${event}:${comment.id}`,
       data: {
@@ -163,13 +153,13 @@ export function updateComment(
 
   const existing = getComment(db, commentId);
   if (!existing) {
-    throw new Error("Comment not found");
+    throw new CommentError("Comment not found");
   }
   if (existing.deletedAt !== null) {
-    throw new Error("Comment has been deleted");
+    throw new CommentError("Comment has been deleted");
   }
   if (existing.userId !== userId) {
-    throw new Error("You can only edit your own comments");
+    throw new CommentError("You can only edit your own comments");
   }
 
   return db
@@ -194,10 +184,10 @@ export function deleteComment(
 ) {
   const existing = getComment(db, commentId);
   if (!existing) {
-    throw new Error("Comment not found");
+    throw new CommentError("Comment not found");
   }
   if (existing.userId !== userId && !isStaff) {
-    throw new Error("You can only delete your own comments");
+    throw new CommentError("You can only delete your own comments");
   }
   if (existing.deletedAt !== null) {
     return existing;

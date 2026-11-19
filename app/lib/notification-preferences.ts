@@ -1,7 +1,7 @@
 // ─── Notification preferences (pure) ───
 // Which preference switches a person sees. It depends on what they are or
-// have, not on their role alone: a Student who buys a Team Licence is a Team
-// Admin and sees Seat claims.
+// have, not on their role alone: a Student who buys a Team Licence sees Seat
+// claims, and anyone who is the Instructor of a course sees Enrollments.
 
 import { UserRole } from "~/db/schema";
 import type { NotificationCategory } from "~/lib/notifications.server";
@@ -10,8 +10,10 @@ export type PreferenceFacts = {
   role: UserRole;
   /** Has made at least one Purchase. */
   hasPurchase: boolean;
-  /** Is a Team Admin on at least one Team Licence. */
-  isTeamAdmin: boolean;
+  /** Bought a Team Licence, so is who Seat claims are told to. */
+  boughtTeamLicence: boolean;
+  /** Is the Instructor of at least one course. */
+  teachesACourse: boolean;
 };
 
 /** The glossary's names, as shown beside each switch. */
@@ -38,8 +40,8 @@ export function visibleNotificationCategories(
   const visible: NotificationCategory[] = [];
   if (facts.hasPurchase) visible.push("refund-request-updates");
   if (facts.role === UserRole.Admin) visible.push("open-refund-requests");
-  if (facts.isTeamAdmin) visible.push("seat-claims");
-  if (facts.role === UserRole.Instructor) {
+  if (facts.boughtTeamLicence) visible.push("seat-claims");
+  if (facts.role === UserRole.Instructor || facts.teachesACourse) {
     visible.push("enrollments", "discussion-questions");
   }
   visible.push("discussion-replies");

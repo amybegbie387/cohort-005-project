@@ -15,6 +15,9 @@ import {
 } from "~/lib/enrollments.server";
 import { getSeatAvailability } from "~/lib/refunds.server";
 import {
+  NOTIFICATION_EVENT_CATEGORIES,
+  toNotificationSender,
+  toNotificationUser,
   triggerSafely,
   type NotificationService,
 } from "~/lib/notifications.server";
@@ -134,20 +137,11 @@ function notifyTeamAdmin(
 
   triggerSafely(notifications, {
     event: "seat-claimed",
-    category: "seat-claims",
-    recipient: {
-      id: teamAdmin.id,
-      name: teamAdmin.name,
-      email: teamAdmin.email,
-      avatarUrl: teamAdmin.avatarUrl,
-    },
+    category: NOTIFICATION_EVENT_CATEGORIES["seat-claimed"],
+    recipient: toNotificationUser(teamAdmin),
     idempotencyKey: `seat-claimed:${seat.id}`,
     data: {
-      sender: {
-        id: claimer.id,
-        name: claimer.name,
-        avatarUrl: claimer.avatarUrl,
-      },
+      sender: toNotificationSender(claimer),
       link: "/team",
       courseId: course.id,
       courseTitle: course.title,

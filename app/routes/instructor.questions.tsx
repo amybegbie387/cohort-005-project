@@ -13,7 +13,7 @@ import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
-import { createComment, getComment } from "~/lib/comments.server";
+import { CommentError, createComment, getComment } from "~/lib/comments.server";
 import { getNotifications } from "~/lib/notifications-instance.server";
 import { parseFormData } from "~/lib/validation";
 import { db } from "~/db";
@@ -123,7 +123,7 @@ const replySchema = z.object({
 });
 
 export function meta() {
-  return [{ title: "Unanswered Questions â€” Cadence" }];
+  return [{ title: "Unanswered Questions — Cadence" }];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -160,7 +160,7 @@ export async function action({ request }: Route.ActionArgs) {
     throw data("Course not found", { status: 404 });
   }
 
-  // Answering as the course's voice â€” so it must be the course's own
+  // Answering as the course's voice — so it must be the course's own
   // instructor, or an admin.
   const access = await requireStaff(request, course.courseId);
 
@@ -174,7 +174,7 @@ export async function action({ request }: Route.ActionArgs) {
       getNotifications()
     );
   } catch (error) {
-    if (error instanceof Error) {
+    if (error instanceof CommentError) {
       return { ok: false, error: error.message };
     }
     throw error;

@@ -5,7 +5,8 @@ import { visibleNotificationCategories } from "./notification-preferences";
 const nobody = {
   role: UserRole.Student,
   hasPurchase: false,
-  isTeamAdmin: false,
+  boughtTeamLicence: false,
+  teachesACourse: false,
 };
 
 describe("visibleNotificationCategories", () => {
@@ -21,15 +22,15 @@ describe("visibleNotificationCategories", () => {
     ).toEqual(["refund-request-updates", "discussion-replies"]);
   });
 
-  it("shows Seat claims to a Team Admin, even a Student", () => {
+  it("shows Seat claims to anyone who bought a Team Licence, even a Student", () => {
     expect(
-      visibleNotificationCategories({ ...nobody, isTeamAdmin: true })
+      visibleNotificationCategories({ ...nobody, boughtTeamLicence: true })
     ).toEqual(["seat-claims", "discussion-replies"]);
   });
 
-  it("shows Enrollments and Discussion Questions to an Instructor", () => {
+  it("shows Enrollments and Discussion Questions to anyone who teaches a course", () => {
     expect(
-      visibleNotificationCategories({ ...nobody, role: UserRole.Instructor })
+      visibleNotificationCategories({ ...nobody, teachesACourse: true })
     ).toEqual(["enrollments", "discussion-questions", "discussion-replies"]);
   });
 
@@ -39,22 +40,23 @@ describe("visibleNotificationCategories", () => {
     ).toEqual(["open-refund-requests", "discussion-replies"]);
   });
 
-  it("does not show Seat claims or Refund Request updates by role alone", () => {
+  it("does not show Seat claims or Refund Request updates to someone who only teaches", () => {
     const categories = visibleNotificationCategories({
       ...nobody,
-      role: UserRole.Instructor,
+      teachesACourse: true,
     });
 
     expect(categories).not.toContain("seat-claims");
     expect(categories).not.toContain("refund-request-updates");
   });
 
-  it("shows every switch to an Instructor who bought a Team Licence and is a Team Admin", () => {
+  it("shows every switch to an Instructor who bought a Team Licence", () => {
     expect(
       visibleNotificationCategories({
         role: UserRole.Instructor,
         hasPurchase: true,
-        isTeamAdmin: true,
+        boughtTeamLicence: true,
+        teachesACourse: true,
       })
     ).toEqual([
       "refund-request-updates",
@@ -63,5 +65,17 @@ describe("visibleNotificationCategories", () => {
       "discussion-questions",
       "discussion-replies",
     ]);
+  });
+
+  it("shows Enrollments and Discussion Questions to a Student who is the Instructor of a course", () => {
+    expect(
+      visibleNotificationCategories({ ...nobody, teachesACourse: true })
+    ).toContain("enrollments");
+  });
+
+  it("still shows them to an Instructor who has no course yet", () => {
+    expect(
+      visibleNotificationCategories({ ...nobody, role: UserRole.Instructor })
+    ).toEqual(["enrollments", "discussion-questions", "discussion-replies"]);
   });
 });

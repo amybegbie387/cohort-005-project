@@ -59,20 +59,96 @@ function addPurchase(userId: number) {
     .run();
 }
 
-function makeTeamAdmin(userId: number) {
+function addCourseTaughtBy(instructorId: number) {
+  const category = db
+    .insert(schema.categories)
+    .values({ name: "Dev", slug: `dev-${Math.random()}` })
+    .returning()
+    .get();
+  return db
+    .insert(schema.courses)
+    .values({
+      title: "A course",
+      slug: `course-${Math.random()}`,
+      description: "About it",
+      salesCopy: "Buy it",
+      instructorId,
+      categoryId: category.id,
+      status: schema.CourseStatus.Published,
+    })
+    .returning()
+    .get();
+}
+
+// A Team Licence is the Purchase that granted Seats; its buyer hears of claims.
+function buyTeamLicence(userId: number) {
+  const course = addCourseTaughtBy(addUser(UserRole.Instructor).id);
   const team = db.insert(schema.teams).values({}).returning().get();
   db.insert(schema.teamMembers)
     .values({ teamId: team.id, userId, role: TeamMemberRole.Admin })
     .run();
+  const purchase = db
+    .insert(schema.purchases)
+    .values({ userId, courseId: course.id, amountPaid: 1000 })
+    .returning()
+    .get();
+  db.insert(schema.coupons)
+    .values({
+      teamId: team.id,
+      courseId: course.id,
+      code: `seat-${Math.random()}`,
+      purchaseId: purchase.id,
+    })
+    .run();
 }
 
 describe("saveNotificationSwitch", () => {
-  it("writes only the flipped category to the feed channel", async () => {
+  it("writes only the flipped category once the person has a full set", async () => {
+    await notifications.mergePreferences(5, DEFAULT_NOTIFICATION_PREFERENCES);
+    notifications.preferenceWrites.length = 0;
+
     await saveNotificationSwitch(notifications, 5, "seat-claims", false);
 
     expect(notifications.preferenceWrites).toEqual([
       { userId: 5, changes: { "seat-claims": { feed: false } } },
     ]);
+  });
+
+  it("keeps Enrollments off when a person with no preferences flips another switch", async () => {
+    await saveNotificationSwitch(notifications, 5, "seat-claims", false);
+
+    expect(await notifications.getPreferences(5)).toEqual({
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      "seat-claims": { feed: false },
+    });
+  });
+
+  it("fills in what a partial set lacks without touching what it has", async () => {
+    await notifications.mergePreferences(5, {
+      "discussion-replies": { feed: false },
+    });
+
+    await saveNotificationSwitch(notifications, 5, "seat-claims", false);
+
+    expect(await notifications.getPreferences(5)).toEqual({
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      "discussion-replies": { feed: false },
+      "seat-claims": { feed: false },
+    });
+  });
+
+  it("does not guess when the stored preferences cannot be read", async () => {
+    const unreadable: NotificationService = {
+      ...notifications,
+      async getPreferences() {
+        throw new Error("vendor down");
+      },
+    };
+
+    await expect(
+      saveNotificationSwitch(unreadable, 5, "seat-claims", false)
+    ).rejects.toThrow("vendor down");
+    expect(notifications.preferenceWrites).toEqual([]);
   });
 
   it("leaves the person's other choices untouched", async () => {
@@ -148,9 +224,9 @@ describe("getNotificationSwitches", () => {
     ]);
   });
 
-  it("shows Seat claims to a Student who is a Team Admin, with the saved value", async () => {
+  it("shows Seat claims to a Student who bought a Team Licence, with the saved value", async () => {
     const student = addUser(UserRole.Student);
-    makeTeamAdmin(student.id);
+    buyTeamLicence(student.id);
     await saveNotificationSwitch(notifications, student.id, "seat-claims", false);
 
     const switches = await getNotificationSwitches(db, notifications, student.id);
@@ -162,6 +238,30 @@ describe("getNotificationSwitches", () => {
     });
   });
 
+  it("shows Enrollments and Discussion Questions to a Student who is the Instructor of a course", async () => {
+    const student = addUser(UserRole.Student);
+    addCourseTaughtBy(student.id);
+
+    const switches = await getNotificationSwitches(db, notifications, student.id);
+
+    expect(switches.map((s) => [s.category, s.enabled])).toEqual([
+      ["enrollments", false],
+      ["discussion-questions", true],
+      ["discussion-replies", true],
+    ]);
+  });
+
+  it("does not show Seat claims to a Team Admin who bought nothing", async () => {
+    const student = addUser(UserRole.Student);
+    const team = db.insert(schema.teams).values({}).returning().get();
+    db.insert(schema.teamMembers)
+      .values({ teamId: team.id, userId: student.id, role: TeamMemberRole.Admin })
+      .run();
+
+    const switches = await getNotificationSwitches(db, notifications, student.id);
+
+    expect(switches.map((s) => s.category)).not.toContain("seat-claims");
+  });
   it("shows Open Refund Requests to a Platform Admin", async () => {
     const admin = addUser(UserRole.Admin);
 

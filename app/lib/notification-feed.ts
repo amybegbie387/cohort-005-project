@@ -2,6 +2,7 @@
 // What the Feed shows, worked out from a Notification's event and data. Safe
 // for the browser: no vendor, no server imports.
 
+import type { NotificationEvent } from "~/lib/notifications.server";
 import { formatPrice } from "~/lib/utils";
 
 const MAX_BADGE = 9;
@@ -26,7 +27,7 @@ export type NotificationRowText = {
 };
 
 type RowInput = {
-  event: string;
+  event: NotificationEvent;
   sender: { name: string } | null;
   data: Record<string, unknown>;
 };
@@ -37,6 +38,10 @@ function text(value: unknown): string {
 
 function joinContext(...parts: unknown[]): string {
   return parts.map(text).filter(Boolean).join(" · ");
+}
+
+function amountText(amount: unknown): string | null {
+  return typeof amount === "number" ? formatPrice(amount) : null;
 }
 
 /**
@@ -53,7 +58,9 @@ export function describeNotification({
   switch (event) {
     case "discussion-question-asked":
       return {
-        title: `${who} asked a question`,
+        title: text(data.lessonTitle)
+          ? `${who} asked a question in ${text(data.lessonTitle)}`
+          : `${who} asked a question`,
         snippet:
           text(data.snippet) || joinContext(data.lessonTitle, data.courseTitle),
         icon: "discussion",
@@ -68,19 +75,32 @@ export function describeNotification({
     case "refund-confirmed":
       return {
         title: "Your Refund Request was submitted",
-        snippet: text(data.courseTitle),
+        snippet: joinContext(
+          data.courseTitle,
+          amountText(data.amount),
+          "Under review"
+        ),
         icon: "refund",
       };
     case "refund-approved":
       return {
         title: `${who} approved your Refund Request`,
-        snippet: text(data.decisionNote) || text(data.courseTitle),
+        snippet: joinContext(
+          data.courseTitle,
+          typeof data.purchaseId === "number"
+            ? `Purchase #${data.purchaseId}`
+            : null,
+          data.decisionNote
+        ),
         icon: "refund",
       };
     case "refund-declined":
       return {
         title: `${who} declined your Refund Request`,
-        snippet: text(data.decisionNote) || text(data.courseTitle),
+        snippet: joinContext(
+          text(data.decisionNote) || data.courseTitle,
+          "You can ask again"
+        ),
         icon: "refund",
       };
     case "refund-opened":
@@ -88,7 +108,8 @@ export function describeNotification({
         title: `${who} requested a refund`,
         snippet: joinContext(
           data.courseTitle,
-          typeof data.amount === "number" ? formatPrice(data.amount) : null
+          amountText(data.amount),
+          data.reason
         ),
         icon: "refund",
       };

@@ -10,6 +10,9 @@ import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
 import {
+  NOTIFICATION_EVENT_CATEGORIES,
+  toNotificationSender,
+  toNotificationUser,
   triggerSafely,
   type NotificationService,
 } from "~/lib/notifications.server";
@@ -105,20 +108,11 @@ export function notifyInstructorOfEnrollment(
 
   triggerSafely(notifications, {
     event: "enrollment-created",
-    category: "enrollments",
-    recipient: {
-      id: instructor.id,
-      name: instructor.name,
-      email: instructor.email,
-      avatarUrl: instructor.avatarUrl,
-    },
+    category: NOTIFICATION_EVENT_CATEGORIES["enrollment-created"],
+    recipient: toNotificationUser(instructor),
     idempotencyKey: `enrollment-created:${enrollment.id}`,
     data: {
-      sender: {
-        id: student.id,
-        name: student.name,
-        avatarUrl: student.avatarUrl,
-      },
+      sender: toNotificationSender(student),
       link: `/instructor/${course.id}/students`,
       courseId: course.id,
       courseTitle: course.title,

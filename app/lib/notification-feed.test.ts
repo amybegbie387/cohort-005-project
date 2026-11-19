@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { describeNotification, formatBadgeCount } from "./notification-feed";
+import type { NotificationEvent } from "./notifications.server";
 
 const priya = { id: 7, name: "Priya Shah", avatarUrl: null };
 
 describe("a Discussion row", () => {
-  it("says who asked, with the comment as the snippet", () => {
+  it("says who asked and in which lesson, with the comment as the snippet", () => {
     expect(
       describeNotification({
         event: "discussion-question-asked",
@@ -16,7 +17,7 @@ describe("a Discussion row", () => {
         },
       })
     ).toEqual({
-      title: "Priya Shah asked a question",
+      title: "Priya Shah asked a question in Narrowing",
       snippet: "Why does `in` not narrow here?",
       icon: "discussion",
     });
@@ -38,9 +39,13 @@ describe("a Discussion row", () => {
 });
 
 describe("a Refund Request row", () => {
-  const course = { courseTitle: "Advanced TypeScript", amount: 14900 };
+  const course = {
+    courseTitle: "Advanced TypeScript",
+    amount: 14900,
+    purchaseId: 42,
+  };
 
-  it("confirms to the buyer with no sender", () => {
+  it("confirms to the buyer with the course and amount, under review", () => {
     expect(
       describeNotification({
         event: "refund-confirmed",
@@ -49,12 +54,12 @@ describe("a Refund Request row", () => {
       })
     ).toEqual({
       title: "Your Refund Request was submitted",
-      snippet: "Advanced TypeScript",
+      snippet: "Advanced TypeScript · $149.00 · Under review",
       icon: "refund",
     });
   });
 
-  it("tells the buyer who approved, with the decision note when there is one", () => {
+  it("tells the buyer who approved, with the course, Purchase and decision note", () => {
     expect(
       describeNotification({
         event: "refund-approved",
@@ -63,35 +68,55 @@ describe("a Refund Request row", () => {
       })
     ).toEqual({
       title: "Ada Admin approved your Refund Request",
-      snippet: "No problem at all.",
+      snippet: "Advanced TypeScript · Purchase #42 · No problem at all.",
       icon: "refund",
     });
   });
 
-  it("tells the buyer who declined, falling back to the course", () => {
+  it("leaves the decision note out of an approval that has none", () => {
+    expect(
+      describeNotification({
+        event: "refund-approved",
+        sender: { name: "Ada Admin" },
+        data: { ...course, decisionNote: null },
+      }).snippet
+    ).toBe("Advanced TypeScript · Purchase #42");
+  });
+
+  it("tells the buyer who declined, with the decision note and that they can ask again", () => {
+    expect(
+      describeNotification({
+        event: "refund-declined",
+        sender: { name: "Ada Admin" },
+        data: { ...course, decisionNote: "Outside the window." },
+      })
+    ).toEqual({
+      title: "Ada Admin declined your Refund Request",
+      snippet: "Outside the window. · You can ask again",
+      icon: "refund",
+    });
+  });
+
+  it("names the course on a decline that has no note", () => {
     expect(
       describeNotification({
         event: "refund-declined",
         sender: { name: "Ada Admin" },
         data: { ...course, decisionNote: null },
-      })
-    ).toEqual({
-      title: "Ada Admin declined your Refund Request",
-      snippet: "Advanced TypeScript",
-      icon: "refund",
-    });
+      }).snippet
+    ).toBe("Advanced TypeScript · You can ask again");
   });
 
-  it("tells a Platform Admin who is waiting, with the course and amount", () => {
+  it("tells a Platform Admin who is waiting, with the course, amount and reason", () => {
     expect(
       describeNotification({
         event: "refund-opened",
         sender: { name: "Bea Buyer" },
-        data: course,
+        data: { ...course, reason: "Not what I expected." },
       })
     ).toEqual({
       title: "Bea Buyer requested a refund",
-      snippet: "Advanced TypeScript · $149.00",
+      snippet: "Advanced TypeScript · $149.00 · Not what I expected.",
       icon: "refund",
     });
   });
@@ -140,7 +165,11 @@ describe("a Team or Enrollment row", () => {
 describe("a row Cadence does not recognise", () => {
   it("still renders something readable", () => {
     expect(
-      describeNotification({ event: "mystery", sender: null, data: {} })
+      describeNotification({
+        event: "mystery" as NotificationEvent,
+        sender: null,
+        data: {},
+      })
     ).toEqual({ title: "New notification", snippet: "", icon: "general" });
   });
 });
