@@ -19,6 +19,8 @@ import { formatPrice } from "~/lib/utils";
 import { listRefundRequestsForBuyer } from "~/lib/refunds.server";
 import { syncNotificationUser } from "~/lib/notification-users.server";
 import { getNotifications } from "~/lib/notifications-instance.server";
+import { getNotificationSwitches } from "~/lib/notification-preferences.server";
+import { NotificationPreferencesCard } from "~/components/notification-preferences-card";
 
 const settingsSchema = z.object({
   name: z.string().trim().min(1, "Name cannot be empty."),
@@ -52,8 +54,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const refundRequests = listRefundRequestsForBuyer(db, currentUserId);
+  const notificationSwitches = await getNotificationSwitches(
+    db,
+    getNotifications(),
+    currentUserId
+  );
 
   return {
+    notificationSwitches,
     user: {
       id: currentUser.id,
       name: currentUser.name,
@@ -103,7 +111,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, refundRequests } = loaderData;
+  const { user, refundRequests, notificationSwitches } = loaderData;
   const openCount = refundRequests.filter(
     (refundRequest) => refundRequest.status === RefundStatus.Open
   ).length;
@@ -192,6 +200,8 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
           </fetcher.Form>
         </CardContent>
       </Card>
+
+      <NotificationPreferencesCard switches={notificationSwitches} />
 
       {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">

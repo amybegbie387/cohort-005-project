@@ -279,7 +279,7 @@ export function NotificationBell() {
                 Mark all as read
               </button>
               <Link
-                to="/settings"
+                to="/settings#notifications"
                 title="Notification settings"
                 aria-label="Notification settings"
                 onClick={() => setOpen(false)}
