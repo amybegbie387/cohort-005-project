@@ -14,6 +14,8 @@ import {
   QuestionType,
   TeamMemberRole,
 } from "../app/db/schema";
+import { syncAllUsers } from "../app/lib/notification-users.server";
+import { getNotifications } from "../app/lib/notifications-instance.server";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2852,6 +2854,21 @@ This course is still in draft while the cluster examples are rewritten against t
   console.log(
     `  Teams: ${countRows(schema.teams)}, coupons: ${countRows(schema.coupons)} (${countRows(schema.coupons, isNotNull(schema.coupons.redeemedByUserId))} redeemed)`
   );
+
+  await syncUsersToNotifications();
+}
+
+// Best-effort: with no KNOCK_SECRET_API_KEY this only logs, and a vendor
+// failure must never fail the seed.
+async function syncUsersToNotifications() {
+  try {
+    const { synced, failed } = await syncAllUsers(db, getNotifications());
+    console.log(
+      `  Notification users: ${synced} synced${failed ? `, ${failed} failed` : ""}`
+    );
+  } catch (error) {
+    console.error("Syncing users to notifications failed:", error);
+  }
 }
 
 seed().catch(console.error);

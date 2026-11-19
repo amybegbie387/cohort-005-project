@@ -5,6 +5,8 @@ import { z } from "zod";
 import type { Route } from "./+types/admin.users";
 import { getCurrentUserId } from "~/lib/session";
 import { parseFormData } from "~/lib/validation";
+import { syncNotificationUser } from "~/lib/notification-users.server";
+import { getNotifications } from "~/lib/notifications-instance.server";
 import { UserRole, users } from "~/db/schema";
 import { db } from "~/db";
 import { eq } from "drizzle-orm";
@@ -119,7 +121,8 @@ export async function action({ request }: Route.ActionArgs) {
   if (intent === "update-user") {
     const { userId, name, email } = parsed.data;
     const user = getUserById(userId);
-    updateUser(userId, name, email, user?.bio ?? null);
+    const updatedUser = updateUser(userId, name, email, user?.bio ?? null);
+    void syncNotificationUser(getNotifications(), updatedUser);
     return { success: true };
   }
 

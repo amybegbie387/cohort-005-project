@@ -5,6 +5,8 @@ import type { Route } from "./+types/signup";
 import { UserRole, users } from "~/db/schema";
 import { setCurrentUserId, getCurrentUserId } from "~/lib/session";
 import { parseFormData } from "~/lib/validation";
+import { syncNotificationUser } from "~/lib/notification-users.server";
+import { getNotifications } from "~/lib/notifications-instance.server";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
@@ -79,6 +81,7 @@ export async function action({ request, url }: Route.ActionArgs) {
     .values({ name, email, role: UserRole.Student, avatarUrl: null })
     .returning()
     .get();
+  void syncNotificationUser(getNotifications(), newUser);
   const cookie = await setCurrentUserId(request, newUser.id);
   throw redirect(destination, {
     headers: { "Set-Cookie": cookie },
