@@ -114,6 +114,17 @@ export function triggerSafely(
   );
 }
 
+/** Archives a comment's Notifications without ever failing the caller. */
+export function archiveForCommentSafely(
+  notifications: NotificationService,
+  commentId: number
+): void {
+  logFailure(
+    () => notifications.archiveForComment(commentId),
+    `archive for comment ${commentId}`
+  );
+}
+
 function logFailure(attempt: () => Promise<void>, what: string): void {
   const log = (error: unknown) =>
     console.error(`[notifications] ${what} failed`, error);

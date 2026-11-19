@@ -370,7 +370,7 @@ describe("editing a comment", () => {
     expect(() => updateComment(db, 9999, student.id, "Hi")).toThrow(
       "Comment not found"
     );
-    deleteComment(db, question.id, student.id, false);
+    deleteComment(db, question.id, student.id, false, notifications);
     expect(() => updateComment(db, question.id, student.id, "Hi")).toThrow(
       "Comment has been deleted"
     );
@@ -382,7 +382,7 @@ describe("deleting a comment", () => {
     const student = addUser("Sam Student");
     const question = ask(student.id);
 
-    const deleted = deleteComment(db, question.id, student.id, false);
+    const deleted = deleteComment(db, question.id, student.id, false, notifications);
 
     expect(deleted.deletedAt).not.toBeNull();
     expect(
@@ -399,7 +399,7 @@ describe("deleting a comment", () => {
     const question = ask(student.id);
 
     expect(
-      deleteComment(db, question.id, base.instructor.id, true).deletedAt
+      deleteComment(db, question.id, base.instructor.id, true, notifications).deletedAt
     ).not.toBeNull();
   });
 
@@ -408,23 +408,127 @@ describe("deleting a comment", () => {
     const other = addUser("Olly Other");
     const question = ask(student.id);
 
-    expect(() => deleteComment(db, question.id, other.id, false)).toThrow(
+    expect(() => deleteComment(db, question.id, other.id, false, notifications)).toThrow(
       "You can only delete your own comments"
     );
   });
 
   it("rejects a comment that does not exist", () => {
-    expect(() => deleteComment(db, 9999, base.user.id, true)).toThrow(
+    expect(() => deleteComment(db, 9999, base.user.id, true, notifications)).toThrow(
       "Comment not found"
     );
+  });
+
+  it("archives the Notifications the deleted comment caused", () => {
+    const student = addUser("Sam Student");
+    const question = ask(student.id);
+
+    deleteComment(db, question.id, student.id, false, notifications);
+
+    expect(notifications.archivedCommentIds).toEqual([question.id]);
+  });
+
+  it("archives a deleted reply's Notification by the reply's own id", () => {
+    const asker = addUser("Ann Asker");
+    const replier = addUser("Ray Replier");
+    const question = ask(asker.id);
+    const reply = createComment(
+      db,
+      replier.id,
+      lessonId,
+      question.id,
+      "Try this",
+      notifications
+    );
+
+    deleteComment(db, reply.id, replier.id, false, notifications);
+
+    expect(notifications.archivedCommentIds).toEqual([reply.id]);
+  });
+
+  it("leaves Discussion Reply Notifications in place when their question is deleted", () => {
+    const asker = addUser("Ann Asker");
+    const replier = addUser("Ray Replier");
+    const question = ask(asker.id);
+    const reply = createComment(
+      db,
+      replier.id,
+      lessonId,
+      question.id,
+      "Try this",
+      notifications
+    );
+
+    deleteComment(db, question.id, asker.id, false, notifications);
+
+    expect(notifications.archivedCommentIds).toEqual([question.id]);
+    expect(notifications.archivedCommentIds).not.toContain(reply.id);
+  });
+
+  it("archives nothing when the delete is rejected", () => {
+    const student = addUser("Sam Student");
+    const other = addUser("Olly Other");
+    const question = ask(student.id);
+
+    expect(() =>
+      deleteComment(db, question.id, other.id, false, notifications)
+    ).toThrow();
+
+    expect(notifications.archivedCommentIds).toEqual([]);
+  });
+
+  it("changes no sent Notification when a comment is edited", () => {
+    const student = addUser("Sam Student");
+    const question = ask(student.id);
+    const triggersBefore = [...notifications.triggers];
+
+    updateComment(db, question.id, student.id, "Reworded question");
+
+    expect(notifications.archivedCommentIds).toEqual([]);
+    expect(notifications.triggers).toEqual(triggersBefore);
+  });
+
+  it("still deletes when archiving rejects, and logs the failure", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const student = addUser("Sam Student");
+    const question = ask(student.id);
+    const failing: NotificationService = {
+      ...notifications,
+      archiveForComment: () => Promise.reject(new Error("vendor down")),
+    };
+
+    const deleted = deleteComment(db, question.id, student.id, false, failing);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(deleted.deletedAt).not.toBeNull();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("still deletes when archiving throws synchronously, and logs the failure", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const student = addUser("Sam Student");
+    const question = ask(student.id);
+    const failing: NotificationService = {
+      ...notifications,
+      archiveForComment: () => {
+        throw new Error("vendor down");
+      },
+    };
+
+    const deleted = deleteComment(db, question.id, student.id, false, failing);
+
+    expect(deleted.deletedAt).not.toBeNull();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it("leaves an already deleted comment's timestamp alone", () => {
     const student = addUser("Sam Student");
     const question = ask(student.id);
-    const first = deleteComment(db, question.id, student.id, false);
+    const first = deleteComment(db, question.id, student.id, false, notifications);
 
-    const second = deleteComment(db, question.id, student.id, false);
+    const second = deleteComment(db, question.id, student.id, false, notifications);
 
     expect(second.deletedAt).toBe(first.deletedAt);
   });

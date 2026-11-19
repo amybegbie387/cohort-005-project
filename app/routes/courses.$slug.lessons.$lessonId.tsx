@@ -853,7 +853,13 @@ export async function action({ params, request }: Route.ActionArgs) {
       if (!existing || existing.lessonId !== lessonId) {
         throw data("Comment not found", { status: 404 });
       }
-      deleteComment(db, parsed.data.commentId, currentUserId, access.isStaff);
+      deleteComment(
+        db,
+        parsed.data.commentId,
+        currentUserId,
+        access.isStaff,
+        getNotifications()
+      );
       return { ok: true };
     } catch (error) {
       // Service validation failures are user-correctable; anything thrown as a

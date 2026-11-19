@@ -8,6 +8,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
 import { MAX_COMMENT_LENGTH, MIN_COMMENT_LENGTH } from "~/lib/comments";
 import {
+  archiveForCommentSafely,
   triggerSafely,
   type NotificationSender,
   type NotificationService,
@@ -179,12 +180,17 @@ export function updateComment(
     .get();
 }
 
-/** Soft delete. Staff may delete anyone's comment; everyone else only their own. */
+/**
+ * Soft delete. Staff may delete anyone's comment; everyone else only their own.
+ * Archives the Notifications this comment itself caused — never those of the
+ * replies beneath it, which stay visible.
+ */
 export function deleteComment(
   db: Db,
   commentId: number,
   userId: number,
-  isStaff: boolean
+  isStaff: boolean,
+  notifications: NotificationService
 ) {
   const existing = getComment(db, commentId);
   if (!existing) {
@@ -197,10 +203,14 @@ export function deleteComment(
     return existing;
   }
 
-  return db
+  const deleted = db
     .update(comments)
     .set({ deletedAt: new Date().toISOString() })
     .where(eq(comments.id, commentId))
     .returning()
     .get();
+
+  archiveForCommentSafely(notifications, commentId);
+
+  return deleted;
 }
