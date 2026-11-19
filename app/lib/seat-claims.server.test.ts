@@ -209,10 +209,14 @@ describe("claiming a Seat", () => {
 });
 
 describe("notifying the Team Admin of a Seat claim", () => {
+  function seatClaimTriggers() {
+    return notifications.triggers.filter((t) => t.event === "seat-claimed");
+  }
+
   it("tells the Team Admin who claimed it, which course and how many Seats are left", () => {
     claim(seats[0].code, base.user.id);
 
-    expect(notifications.triggers).toEqual([
+    expect(seatClaimTriggers()).toEqual([
       {
         event: "seat-claimed",
         category: "seat-claims",
@@ -244,10 +248,10 @@ describe("notifying the Team Admin of a Seat claim", () => {
     claim(seats[1].code, second.id);
     claim(seats[2].code, third.id);
 
-    expect(
-      notifications.triggers.map((t) => t.data.seatsRemaining)
-    ).toEqual([2, 1, 0]);
-    expect(notifications.triggers.map((t) => t.idempotencyKey)).toEqual([
+    expect(seatClaimTriggers().map((t) => t.data.seatsRemaining)).toEqual([
+      2, 1, 0,
+    ]);
+    expect(seatClaimTriggers().map((t) => t.idempotencyKey)).toEqual([
       `seat-claimed:${seats[0].id}`,
       `seat-claimed:${seats[1].id}`,
       `seat-claimed:${seats[2].id}`,
@@ -262,24 +266,23 @@ describe("notifying the Team Admin of a Seat claim", () => {
 
     claim(seats[0].code, base.user.id);
 
-    expect(notifications.triggers[0].data.seatsRemaining).toBe(1);
+    expect(seatClaimTriggers()[0].data.seatsRemaining).toBe(1);
   });
 
   it("sends nothing extra when the last Seat is claimed", () => {
     ({ seats } = buyTeamLicence(teamAdmin.id, 1));
-    notifications.triggers.length = 0;
 
     claim(seats[0].code, base.user.id);
 
-    expect(notifications.triggers).toHaveLength(1);
-    expect(notifications.triggers[0].data.seatsRemaining).toBe(0);
+    expect(seatClaimTriggers()).toHaveLength(1);
+    expect(seatClaimTriggers()[0].data.seatsRemaining).toBe(0);
   });
 
   it("notifies nobody when the Team Admin claims their own Seat", () => {
     claim(seats[0].code, teamAdmin.id);
 
     expect(getSeat(seats[0].id).redeemedByUserId).toBe(teamAdmin.id);
-    expect(notifications.triggers).toEqual([]);
+    expect(seatClaimTriggers()).toEqual([]);
   });
 
   it("still completes the claim when the trigger fails", () => {
@@ -305,5 +308,85 @@ describe("notifying the Team Admin of a Seat claim", () => {
     claimSeat(db, seats[0].code, base.user.id, "", failing);
 
     expect(getSeat(seats[0].id).redeemedByUserId).toBe(base.user.id);
+  });
+});
+
+describe("notifying the Instructor of a claimed Seat's Enrollment", () => {
+  function enrollmentTriggers() {
+    return notifications.triggers.filter(
+      (t) => t.event === "enrollment-created"
+    );
+  }
+
+  it("tells the Instructor which Student enrolled", () => {
+    const { enrollment } = claim(seats[0].code, base.user.id);
+
+    expect(enrollmentTriggers()).toEqual([
+      {
+        event: "enrollment-created",
+        category: "enrollments",
+        recipient: {
+          id: base.instructor.id,
+          name: "Test Instructor",
+          email: "instructor@example.com",
+          avatarUrl: null,
+        },
+        idempotencyKey: `enrollment-created:${enrollment.id}`,
+        data: {
+          sender: { id: base.user.id, name: "Test User", avatarUrl: null },
+          link: `/instructor/${base.course.id}/students`,
+          courseId: base.course.id,
+          courseTitle: "Test Course",
+          courseSlug: "test-course",
+        },
+      },
+    ]);
+  });
+
+  it("notifies when a Lapsed Student claims a Seat", () => {
+    const module = db
+      .insert(schema.modules)
+      .values({ courseId: base.course.id, title: "M", position: 1 })
+      .returning()
+      .get();
+    const lesson = db
+      .insert(schema.lessons)
+      .values({ moduleId: module.id, title: "L", position: 1 })
+      .returning()
+      .get();
+    db.insert(schema.lessonProgress)
+      .values({
+        userId: base.user.id,
+        lessonId: lesson.id,
+        status: schema.LessonProgressStatus.Completed,
+      })
+      .run();
+
+    claim(seats[0].code, base.user.id);
+
+    expect(enrollmentTriggers()).toHaveLength(1);
+  });
+
+  it("notifies nobody when the Instructor claims a Seat on their own course", () => {
+    claim(seats[0].code, base.instructor.id);
+
+    expect(enrollmentTriggers()).toEqual([]);
+  });
+
+  it("still completes the claim when the Enrollment trigger fails", () => {
+    const failing: NotificationService = {
+      ...notifications,
+      trigger: (n) =>
+        n.event === "enrollment-created"
+          ? Promise.reject(new Error("vendor down"))
+          : notifications.trigger(n),
+    };
+
+    claimSeat(db, seats[0].code, base.user.id, "", failing);
+
+    expect(enrollmentsOf(base.user.id)).toHaveLength(1);
+    expect(notifications.triggers.map((t) => t.event)).toEqual([
+      "seat-claimed",
+    ]);
   });
 });

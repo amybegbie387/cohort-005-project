@@ -1,6 +1,6 @@
 // ─── Seat claims (server) ───
 // Claiming a Seat on a Team Licence with its coupon code, and telling the Team
-// Admin who owns the Team Licence. The redeem page calls this.
+// Admin who owns the Team Licence and the course's Instructor. The redeem page calls this.
 //
 // Takes the database first and the Notification service last, like the other
 // services.
@@ -8,7 +8,11 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "~/db/schema";
-import { createEnrollment, isUserEnrolled } from "~/lib/enrollments.server";
+import {
+  createEnrollment,
+  isUserEnrolled,
+  notifyInstructorOfEnrollment,
+} from "~/lib/enrollments.server";
 import { getSeatAvailability } from "~/lib/refunds.server";
 import {
   triggerSafely,
@@ -100,6 +104,7 @@ export function claimSeat(
 
   // The claim has committed. Nothing below may undo it.
   notifyTeamAdmin(db, seat, purchase?.userId ?? null, userId, notifications);
+  notifyInstructorOfEnrollment(db, enrollment, notifications);
 
   return { enrollment };
 }
