@@ -14,18 +14,28 @@ export function createNotificationsFromEnv(
     : createLoggingNotifications();
 }
 
-let instance: NotificationService | undefined;
+let envLoaded = false;
 
-/** The app's one NotificationService. Routes pass it into services. */
-export function getNotifications(): NotificationService {
-  if (!instance) {
+/** process.env plus whatever is in .env. */
+export function getNotificationEnv(): Record<string, string | undefined> {
+  if (!envLoaded) {
     // Vite does not copy .env values without a VITE_ prefix onto process.env.
     try {
       process.loadEnvFile(".env");
     } catch {
       // No .env file: use the real environment as it is.
     }
-    instance = createNotificationsFromEnv(process.env);
+    envLoaded = true;
+  }
+  return process.env;
+}
+
+let instance: NotificationService | undefined;
+
+/** The app's one NotificationService. Routes pass it into services. */
+export function getNotifications(): NotificationService {
+  if (!instance) {
+    instance = createNotificationsFromEnv(getNotificationEnv());
   }
   return instance;
 }

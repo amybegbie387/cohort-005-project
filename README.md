@@ -81,7 +81,7 @@ It needs to be public: GitHub Actions minutes are free on public repos, and the 
 
 You don't need these yet, but you'll be asked for them along the way. Both have a free option:
 
-- **[Knock](https://knock.app/)**, a free Developer account, when you build notifications. Its keys go in `.env`, which is gitignored.
+- **[Knock](https://knock.app/)**, a free Developer account, when you build notifications. Its keys go in `.env`, which is gitignored: `KNOCK_PUBLIC_API_KEY`, `KNOCK_SECRET_API_KEY`, `KNOCK_SIGNING_KEY` and `KNOCK_FEED_CHANNEL_ID`. With none of them set the app still runs and the Notification Feed is empty.
 - **[tldraw](https://www.tldraw.com/)**, for whiteboarding your tasks. Any drawing app will do.
 
 ## Scripts
